@@ -1,6 +1,4 @@
 import datetime
-import tempfile
-import pandas as pd
 import json
 from google.cloud import storage
 from google.cloud import bigquery
@@ -9,15 +7,11 @@ import pymongo
 from airflow import models
 from airflow.operators.python import PythonOperator
 from airflow.providers.google.cloud.transfers.mysql_to_gcs import MySQLToGCSOperator
-from airflow.providers.mongo.hooks.mongo import MongoHook
-from airflow.providers.google.cloud.hooks.gcs import GCSHook
-from airflow.contrib.operators.file_to_gcs import FileToGoogleCloudStorageOperator
 from airflow.providers.google.cloud.operators.bigquery import BigQueryCreateEmptyDatasetOperator
 from airflow.providers.google.cloud.operators.bigquery import BigQueryCreateEmptyTableOperator
-from airflow.contrib.operators.gcs_to_bq import GoogleCloudStorageToBigQueryOperator
 from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
-from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 from airflow.utils.email import send_email
+from airflow.providers.google.cloud.operators.bigquery import BigQueryExecuteQueryOperator
 
 yesterday = datetime.datetime.combine(
     datetime.datetime.today() - datetime.timedelta(1),
@@ -52,7 +46,7 @@ default_args = {
 }
 
 with models.DAG(
-    'extract_data',
+    'extract_and_transform_data',
     default_args=default_args,
     schedule_interval=datetime.timedelta(days=1),
 ) as dag:
@@ -133,4 +127,45 @@ with models.DAG(
         python_callable=create_table_and_load_data_tiki,
     )
 
-    mysql_to_gcs >> mongodb_to_gcs >> create_dataset >> create_graphic_card_table >> move_graphic_card >> create_table_and_load_tiki
+    sql_query_1 = """
+    SELECT
+        brand,
+        COUNT(*) AS total_card
+    FROM
+        `buildingairflow.data.graphic_cards`
+    GROUP BY
+        brand
+    """
+
+    sql_query_2 = """
+    SELECT
+        brand,
+        price,
+        COUNT(*) AS count
+    FROM
+        `buildingairflow.data.graphic_cards`
+    GROUP BY
+        brand, price
+    """
+
+    bigquery_task_1 = BigQueryExecuteQueryOperator(
+        task_id='bigquery_task_1',
+        sql=sql_query_1,
+        destination_dataset_table='buildingairflow.data.graphic_quantity_by_brand',
+        write_disposition='WRITE_TRUNCATE',
+        create_disposition='CREATE_IF_NEEDED',
+        use_legacy_sql=False,
+        gcp_conn_id='my_gcs_conn',
+    )
+
+    bigquery_task_2 = BigQueryExecuteQueryOperator(
+        task_id='bigquery_task_2',
+        sql=sql_query_2,
+        destination_dataset_table='buildingairflow.data.graphic_price_by_brand',
+        write_disposition='WRITE_TRUNCATE',
+        create_disposition='CREATE_IF_NEEDED',
+        use_legacy_sql=False,
+        gcp_conn_id='my_gcs_conn',
+    )
+
+    [mysql_to_gcs,mongodb_to_gcs] >> create_dataset >> create_graphic_card_table >> [move_graphic_card, create_table_and_load_tiki] >> bigquery_task_1 >> bigquery_task_2
