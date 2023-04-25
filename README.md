@@ -23,6 +23,6 @@ Bài toán: Build a data pipeline using Airflow for the purpose of automating th
   <i>Data in Bigquery</i>
 </p>
 <p align="center">
-  <img src="demo/demo2.png"><br/>
+  <img src="demo/demo3.png"><br/>
   <i>Airflow pipeline</i>
 </p>
